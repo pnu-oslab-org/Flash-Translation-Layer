@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 
 /**
  * @brief initialize the submodule
@@ -48,6 +49,7 @@ int device_module_init(const uint64_t modnum, struct device **__dev,
 	dev->d_private = NULL;
 	dev->d_op = NULL;
 	dev->d_submodule_exit = NULL;
+	pthread_mutex_init(&dev->mutex, NULL);
 	(void)flags;
 	ret = submodule_init[modnum](dev, flags);
 	if (ret) {
@@ -76,6 +78,15 @@ int device_module_exit(struct device *dev)
 	if (dev->d_submodule_exit) {
 		dev->d_submodule_exit(dev);
 		dev->d_submodule_exit = NULL;
+	}
+	pthread_mutex_destroy(&dev->mutex);
+	if (dev->inflight_request) {
+		struct device_request *rq = dev->inflight_request;
+		while (rq) {
+			struct device_request *n_rq = rq->next_rq;
+			free(rq);
+			rq = n_rq;
+		}
 	}
 	free(dev);
 	return ret;

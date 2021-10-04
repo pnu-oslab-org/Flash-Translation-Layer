@@ -64,6 +64,8 @@ check:
 	cppcheck --quiet --enable=all --inconclusive --std=posix -I include/ $(SRCS)
 	@echo "[[ FLAWFINDER ROUTINE ]]"
 	flawfinder $(SRCS) include/*.h
+	@echo "[[ STATIC ANALYSIS ROUTINE ]]"
+	lizard $(SRCS) include/*.h
 
 documents:
 	doxygen -s Doxyfile

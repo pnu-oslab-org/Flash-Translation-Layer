@@ -20,6 +20,34 @@
 #include "include/bits.h"
 
 /**
+ * @brief allocate the segment's bitmap
+ *
+ * @param pgftl pointer of the page-ftl structure
+ * @param bitmap double pointer of the bitmap
+ *
+ * @return 0 for successfully allocated
+ */
+static int page_ftl_alloc_bitmap(struct page_ftl *pgftl, uint64_t **bitmap)
+{
+	int compensator;
+	size_t nr_pages_per_segment, page_size;
+	uint64_t *bits;
+
+	nr_pages_per_segment = device_get_pages_per_segment(pgftl->dev);
+	page_size = device_get_page_size(pgftl->dev);
+	compensator = page_size / PAGE_SIZE;
+	bits = (uint64_t *)malloc(
+		BITS_TO_BYTES(nr_pages_per_segment * compensator));
+	if (bits == NULL) {
+		pr_err("bitmap allocation failed\n");
+		return -ENOMEM;
+	}
+	memset(bits, 0, BITS_TO_BYTES(nr_pages_per_segment * compensator));
+	*bitmap = bits;
+	return 0;
+}
+
+/**
  * @brief initialize each segment's metadata
  *
  * @param pgftl pointer of the page ftl structure
@@ -55,20 +83,25 @@ static int page_ftl_init_segment(struct page_ftl *pgftl)
 		return -ENOMEM;
 	}
 	for (size_t i = 0; i < nr_segments; i++) {
-		segments[i].valid_bits = NULL;
+		segments[i].invalid_bits = NULL;
+		segments[i].used_bits = NULL;
 	}
 	for (size_t i = 0; i < nr_segments; i++) {
-		uint64_t *valid_bits;
-		valid_bits = (uint64_t *)malloc(
-			BITS_TO_BYTES(nr_pages_per_segment * compensator));
-		if (valid_bits == NULL) {
-			pr_err("allocated failed(seq:%zu)", i);
-			return -ENOMEM;
+		int ret;
+		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].invalid_bits);
+		if (ret) {
+			pr_err("initialize the invalid bitmap failed (segnum: %zu)\n",
+			       i);
+			return ret;
 		}
-		memset(valid_bits, 0,
-		       BITS_TO_BYTES(nr_pages_per_segment * compensator));
-		segments[i].valid_bits = valid_bits;
-		atomic_store(&segments[i].nr_invalid_blocks, 0);
+		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].used_bits);
+		if (ret) {
+			pr_err("initialize the used bitmap failed (segnum: %zu)\n",
+			       i);
+			return ret;
+		}
+		atomic_store(&segments[i].nr_invalid_pages, 0);
+		atomic_store(&segments[i].nr_free_pages, nr_pages_per_segment);
 		pr_debug(
 			"initialize the segment %zu (bits: %zu * %d, size: %lu)\n",
 			i, nr_pages_per_segment, compensator,
@@ -98,6 +131,7 @@ static int page_ftl_free_cache(struct page_ftl_cache *cache)
 		free(cache->free_block_bits);
 		cache->free_block_bits = NULL;
 	}
+	pthread_mutex_destroy(&cache->mutex);
 
 	return ret;
 }
@@ -135,7 +169,7 @@ static int page_ftl_init_cache(struct page_ftl *pgftl)
 	memset(free_block_bits, 0, BITS_TO_BYTES(PAGE_FTL_NR_CACHE_BLOCK));
 	cache->free_block_bits = free_block_bits;
 
-	lru = lru_init(PAGE_FTL_NR_CACHE_BLOCK, NULL);
+	lru = lru_init(PAGE_FTL_NR_CACHE_BLOCK, page_ftl_fill_wb);
 	if (lru == NULL) {
 		pr_err("creation of the LRU cache failed (size: %lu)\n",
 		       (uint64_t)PAGE_FTL_NR_CACHE_BLOCK);
@@ -251,13 +285,21 @@ static void page_ftl_free_segments(struct page_ftl *pgftl)
 	assert(NULL != segments);
 	nr_segments = device_get_nr_segments(pgftl->dev);
 	for (i = 0; i < nr_segments; i++) {
-		uint64_t *valid_bits;
-		valid_bits = segments[i].valid_bits;
-		if (valid_bits == NULL) {
+		uint64_t *invalid_bits;
+		uint64_t *used_bits;
+		invalid_bits = segments[i].invalid_bits;
+		if (invalid_bits == NULL) {
 			continue;
 		}
-		free(valid_bits);
-		segments[i].valid_bits = NULL;
+		free(invalid_bits);
+		segments[i].invalid_bits = NULL;
+
+		used_bits = segments[i].used_bits;
+		if (used_bits == NULL) {
+			continue;
+		}
+		free(used_bits);
+		segments[i].used_bits = NULL;
 	}
 }
 
@@ -276,6 +318,7 @@ int page_ftl_close(struct page_ftl *pgftl)
 		return ret;
 	}
 
+	pthread_mutex_destroy(&pgftl->mutex);
 	if (pgftl->segments) {
 		page_ftl_free_segments(pgftl);
 		free(pgftl->segments);

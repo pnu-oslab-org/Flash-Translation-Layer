@@ -43,6 +43,8 @@ static int page_ftl_open_interface(struct flash_device *flash)
  * @param offset size of the offset (bytes)
  *
  * @return positive or zero write size to success, negative number to fail
+ *
+ * @todo split I/O to page_size
  */
 static ssize_t page_ftl_write_interface(struct flash_device *flash,
 					void *buffer, size_t count,
@@ -102,6 +104,8 @@ exception:
  * @param offset size of the offset (bytes)
  *
  * @return positive or zero read size to success, negative number to fail
+ *
+ * @todo split I/O to page_size
  */
 static ssize_t page_ftl_read_interface(struct flash_device *flash, void *buffer,
 				       size_t count, off_t offset)

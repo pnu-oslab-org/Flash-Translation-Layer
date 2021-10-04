@@ -42,8 +42,11 @@ struct page_ftl_cache {
  * Segment number is same as block number
  */
 struct page_ftl_segment {
-	atomic64_t nr_invalid_blocks;
-	uint64_t *valid_bits;
+	atomic64_t nr_invalid_pages;
+	atomic64_t nr_free_pages;
+
+	uint64_t *invalid_bits; /**< contain the invalid page information */
+	uint64_t *used_bits; /**< contain the use page information */
 };
 
 /**
@@ -51,12 +54,14 @@ struct page_ftl_segment {
  */
 struct page_ftl {
 	uint32_t *trans_map; /**< page-level mapping table */
+	uint64_t alloc_segnum; /**< last allocated segment number */
 	struct page_ftl_cache *cache;
 	struct page_ftl_segment *segments;
 	struct device *dev;
 	pthread_mutex_t mutex;
 };
 
+/* page-interface.c */
 int page_ftl_open(struct page_ftl *);
 int page_ftl_close(struct page_ftl *);
 
@@ -64,8 +69,14 @@ ssize_t page_ftl_submit_request(struct page_ftl *, struct device_request *);
 ssize_t page_ftl_write(struct page_ftl *, struct device_request *);
 ssize_t page_ftl_read(struct page_ftl *, struct device_request *);
 
+int page_ftl_fill_wb(const uint64_t lpn, uintptr_t request);
+
 int page_ftl_module_init(struct flash_device *, uint64_t flags);
 int page_ftl_module_exit(struct flash_device *);
+
+/* page-map.c */
+struct device_address page_ftl_get_page(struct page_ftl *pgftl);
+int page_ftl_reclaim_page(struct page_ftl *pgftl, struct device_address paddr);
 
 static inline size_t page_ftl_get_map_size(struct page_ftl *pgftl)
 {
