@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <errno.h>
 
 static struct device_request *
 page_ftl_merge_request(struct device_request *rq_vec)
@@ -22,9 +23,6 @@ page_ftl_merge_request(struct device_request *rq_vec)
 	struct device *dev;
 	size_t page_size;
 	char *buffer;
-
-	request = NULL;
-	buffer = NULL;
 
 	pgftl = (struct page_ftl *)rq_vec->rq_private;
 	dev = pgftl->dev;
@@ -62,6 +60,7 @@ static int page_ftl_vectored_write(struct device_request *rq_vec)
 {
 	struct device_request *request;
 	request = page_ftl_merge_request(rq_vec);
+	(void)request;
 	return 0;
 }
 
@@ -74,11 +73,12 @@ int page_ftl_fill_wb(const uint64_t lpn, uintptr_t __request)
 	(void)lpn;
 
 	request = (struct device_request *)__request;
+	if (request == NULL) {
+		pr_err("lru deallcate routine doesn't work correctly\n");
+		return -EINVAL;
+	}
 	pgftl = (struct page_ftl *)request->rq_private;
 	dev = pgftl->dev;
-
-	assert(NULL != request);
-	assert(NULL != dev);
 
 	pthread_mutex_lock(&dev->mutex);
 	if (dev->inflight_request) {
