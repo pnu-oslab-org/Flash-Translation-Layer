@@ -29,20 +29,16 @@
  */
 static int page_ftl_alloc_bitmap(struct page_ftl *pgftl, uint64_t **bitmap)
 {
-	int compensator;
-	size_t nr_pages_per_segment, page_size;
+	size_t nr_pages_per_segment;
 	uint64_t *bits;
 
 	nr_pages_per_segment = device_get_pages_per_segment(pgftl->dev);
-	page_size = device_get_page_size(pgftl->dev);
-	compensator = page_size / PAGE_SIZE;
-	bits = (uint64_t *)malloc(
-		BITS_TO_BYTES(nr_pages_per_segment * compensator));
+	bits = (uint64_t *)malloc(BITS_TO_BYTES(nr_pages_per_segment));
 	if (bits == NULL) {
 		pr_err("bitmap allocation failed\n");
 		return -ENOMEM;
 	}
-	memset(bits, 0, BITS_TO_BYTES(nr_pages_per_segment * compensator));
+	memset(bits, 0, BITS_TO_BYTES(nr_pages_per_segment));
 	*bitmap = bits;
 	return 0;
 }
@@ -56,25 +52,13 @@ static int page_ftl_alloc_bitmap(struct page_ftl *pgftl, uint64_t **bitmap)
  */
 static int page_ftl_init_segment(struct page_ftl *pgftl)
 {
-	int compensator;
 	size_t nr_segments;
 	size_t nr_pages_per_segment;
-	size_t page_size;
 
 	struct page_ftl_segment *segments;
 
-	assert(0 < PAGE_SIZE);
-
 	nr_segments = device_get_nr_segments(pgftl->dev);
 	nr_pages_per_segment = device_get_pages_per_segment(pgftl->dev);
-	page_size = device_get_page_size(pgftl->dev);
-
-	compensator = page_size / PAGE_SIZE;
-	if (page_size < PAGE_SIZE) {
-		pr_err("flash page size must larger than host page size (%zu >= %d)\n",
-		       page_size, PAGE_SIZE);
-		return -EINVAL;
-	}
 
 	segments = (struct page_ftl_segment *)malloc(
 		sizeof(struct page_ftl_segment) * nr_segments);
@@ -83,111 +67,31 @@ static int page_ftl_init_segment(struct page_ftl *pgftl)
 		return -ENOMEM;
 	}
 	for (size_t i = 0; i < nr_segments; i++) {
-		segments[i].invalid_bits = NULL;
-		segments[i].used_bits = NULL;
+		segments[i].use_bits = NULL;
 	}
 	for (size_t i = 0; i < nr_segments; i++) {
 		int ret;
-		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].invalid_bits);
+		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].use_bits);
 		if (ret) {
-			pr_err("initialize the invalid bitmap failed (segnum: %zu)\n",
+			pr_err("initialize the use bitmap failed (segnum: %zu)\n",
 			       i);
 			return ret;
 		}
-		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].used_bits);
+		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].valid_bits);
 		if (ret) {
-			pr_err("initialize the used bitmap failed (segnum: %zu)\n",
+			pr_err("initialize the valid bitmap failed (segnum: %zu)\n",
 			       i);
 			return ret;
 		}
-		atomic_store(&segments[i].nr_invalid_pages, 0);
 		atomic_store(&segments[i].nr_free_pages, nr_pages_per_segment);
-		pr_debug(
-			"initialize the segment %zu (bits: %zu * %d, size: %lu)\n",
-			i, nr_pages_per_segment, compensator,
-			(uint64_t)(nr_pages_per_segment * compensator) / 8);
+		atomic_store(&segments[i].nr_valid_pages, 0);
+		pr_debug("initialize the segment %zu (bits: %zu, size: %lu)\n",
+			 i, nr_pages_per_segment,
+			 (uint64_t)(nr_pages_per_segment) / 8);
 	}
 
 	pgftl->segments = segments;
 	return 0;
-}
-
-/**
- * @brief deallocate the page ftl's cache
- *
- * @param cache pointer of the cache
- *
- * @return deallocate status of the cache
- */
-static int page_ftl_free_cache(struct page_ftl_cache *cache)
-{
-	int ret = 0;
-	assert(NULL != cache);
-	if (cache->lru) {
-		ret = lru_free(cache->lru);
-		cache->lru = NULL;
-	}
-	if (cache->free_block_bits) {
-		free(cache->free_block_bits);
-		cache->free_block_bits = NULL;
-	}
-	pthread_mutex_destroy(&cache->mutex);
-
-	return ret;
-}
-
-/**
- * @brief initialize the cache data structure
- *
- * @param pgftl pointer of the page FTL's data structure
- *
- * @return 0 to success, -EINVAL to fail
- */
-static int page_ftl_init_cache(struct page_ftl *pgftl)
-{
-	int ret = 0;
-	struct page_ftl_cache *cache;
-	uint64_t *free_block_bits = NULL;
-	struct lru_cache *lru = NULL;
-
-	cache = (struct page_ftl_cache *)malloc(sizeof(struct page_ftl_cache));
-	if (cache == NULL) {
-		pr_err("memory allocation failed\n");
-		return -ENOMEM;
-	}
-
-	pthread_mutex_init(&cache->mutex, NULL);
-
-	free_block_bits =
-		(uint64_t *)malloc(BITS_TO_BYTES(PAGE_FTL_NR_CACHE_BLOCK));
-	if (free_block_bits == NULL) {
-		pr_err("free block bitmap construction failed (size: %lu)\n",
-		       (uint64_t)PAGE_FTL_NR_CACHE_BLOCK);
-		ret = -EINVAL;
-		goto exception;
-	}
-	memset(free_block_bits, 0, BITS_TO_BYTES(PAGE_FTL_NR_CACHE_BLOCK));
-	cache->free_block_bits = free_block_bits;
-
-	lru = lru_init(PAGE_FTL_NR_CACHE_BLOCK, page_ftl_fill_wb);
-	if (lru == NULL) {
-		pr_err("creation of the LRU cache failed (size: %lu)\n",
-		       (uint64_t)PAGE_FTL_NR_CACHE_BLOCK);
-		ret = -EINVAL;
-		goto exception;
-	}
-	cache->lru = lru;
-
-	memset(cache->buffer, 0, sizeof(cache->buffer));
-
-	pgftl->cache = cache;
-
-	return 0;
-exception:
-	if (cache != NULL) {
-		page_ftl_free_cache(cache);
-	}
-	return ret;
 }
 
 /**
@@ -220,6 +124,7 @@ int page_ftl_open(struct page_ftl *pgftl)
 	pgftl->trans_map = (uint32_t *)malloc(map_size);
 	if (pgftl->trans_map == NULL) {
 		pr_err("cannot allocate the memory for mapping table\n");
+		err = -ENOMEM;
 		goto exception;
 	}
 	/** initialize the mapping table */
@@ -228,11 +133,6 @@ int page_ftl_open(struct page_ftl *pgftl)
 	}
 
 	err = page_ftl_init_segment(pgftl);
-	if (err) {
-		goto exception;
-	}
-
-	err = page_ftl_init_cache(pgftl);
 	if (err) {
 		goto exception;
 	}
@@ -264,7 +164,7 @@ ssize_t page_ftl_submit_request(struct page_ftl *pgftl,
 	switch (request->flag) {
 	case DEVICE_WRITE:
 		return page_ftl_write(pgftl, request);
-	case DEVICE_ERASE:
+	case DEVICE_READ:
 		return page_ftl_read(pgftl, request);
 	default:
 		pr_err("invalid flag detected: %u\n", request->flag);
@@ -285,21 +185,21 @@ static void page_ftl_free_segments(struct page_ftl *pgftl)
 	assert(NULL != segments);
 	nr_segments = device_get_nr_segments(pgftl->dev);
 	for (i = 0; i < nr_segments; i++) {
-		uint64_t *invalid_bits;
-		uint64_t *used_bits;
-		invalid_bits = segments[i].invalid_bits;
-		if (invalid_bits == NULL) {
-			continue;
-		}
-		free(invalid_bits);
-		segments[i].invalid_bits = NULL;
+		uint64_t *use_bits;
+		uint64_t *valid_bits;
 
-		used_bits = segments[i].used_bits;
-		if (used_bits == NULL) {
-			continue;
+		use_bits = segments[i].use_bits;
+		valid_bits = segments[i].valid_bits;
+
+		if (use_bits != NULL) {
+			free(use_bits);
 		}
-		free(used_bits);
-		segments[i].used_bits = NULL;
+		if (valid_bits != NULL) {
+			free(valid_bits);
+		}
+
+		segments[i].use_bits = NULL;
+		segments[i].valid_bits = NULL;
 	}
 }
 
@@ -323,12 +223,6 @@ int page_ftl_close(struct page_ftl *pgftl)
 		page_ftl_free_segments(pgftl);
 		free(pgftl->segments);
 		pgftl->segments = NULL;
-	}
-
-	if (pgftl->cache) {
-		ret = page_ftl_free_cache(pgftl->cache);
-		free(pgftl->cache);
-		pgftl->cache = NULL;
 	}
 
 	if (pgftl->trans_map) {

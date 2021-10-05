@@ -9,95 +9,148 @@
 #include "include/page.h"
 #include "include/device.h"
 #include "include/log.h"
+#include "include/bits.h"
+#include "include/atomic.h"
 
 #include <pthread.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <string.h>
 
-static struct device_request *
-page_ftl_merge_request(struct device_request *rq_vec)
+static void page_ftl_invalidate(struct page_ftl *pgftl, uint64_t lpn)
 {
-	struct device_request *request;
-	struct page_ftl *pgftl;
-	struct device *dev;
-	size_t page_size;
-	char *buffer;
+	struct page_ftl_segment *segment;
+	struct device_address paddr;
 
-	pgftl = (struct page_ftl *)rq_vec->rq_private;
+	uint32_t segnum;
+	size_t nr_valid_pages;
+
+	paddr.lpn = pgftl->trans_map[lpn];
+	segnum = paddr.format.block;
+	segment = &pgftl->segments[segnum];
+
+	paddr.format.block = 0;
+	reset_bit(segment->valid_bits, paddr.lpn);
+
+	nr_valid_pages = atomic_load(&segment->nr_valid_pages);
+	atomic_store(&segment->nr_valid_pages, nr_valid_pages - 1);
+
+	pgftl->trans_map[lpn] = PADDR_EMPTY;
+}
+
+static void page_ftl_write_end_rq(struct device_request *request)
+{
+	struct page_ftl *pgftl;
+
+	uint64_t lpn;
+
+	pgftl = (struct page_ftl *)request->rq_private;
+
+	lpn = page_ftl_get_lpn(pgftl, request->sector);
+	if (pgftl->trans_map[lpn] != PADDR_EMPTY) {
+		page_ftl_invalidate(pgftl, lpn);
+		pr_debug("invalidate address: %lu => %u\n", lpn,
+			 pgftl->trans_map[lpn]);
+	}
+	page_ftl_update_map(pgftl, request->sector, request->paddr.lpn);
+	pr_debug("new address: %lu => %u\n", lpn, pgftl->trans_map[lpn]);
+	pr_debug("%lu/%lu(free/valid)\n",
+		 atomic_load(&pgftl->segments[request->paddr.format.block]
+				      .nr_free_pages),
+		 atomic_load(&pgftl->segments[request->paddr.format.block]
+				      .nr_valid_pages));
+	pr_debug("%d\n",
+		 *(int *)&((char *)request->data)[page_ftl_get_page_offset(
+			 pgftl, request->sector)]);
+	free(request->data);
+}
+
+static ssize_t page_ftl_read_for_overwrite(struct page_ftl *pgftl, uint64_t lpn,
+					   void *buffer)
+{
+	struct device *dev;
+	struct device_request *read_rq;
+
+	size_t page_size;
+	ssize_t ret;
+
 	dev = pgftl->dev;
 	page_size = device_get_page_size(dev);
-	request =
+
+	read_rq =
 		(struct device_request *)malloc(sizeof(struct device_request));
-	if (request == NULL) {
-		pr_err("memory allocation failed\n");
-		goto exception;
+	if (read_rq == NULL) {
+		return -ENOMEM;
+	}
+	read_rq->flag = DEVICE_READ;
+	read_rq->sector = lpn * page_size;
+	read_rq->data_len = page_size;
+	read_rq->data = buffer;
+	ret = page_ftl_read(pgftl, read_rq);
+	if (ret < 0) {
+		pr_err("previous buffer read failed\n");
+		return -EFAULT;
+	}
+	free(read_rq);
+	return ret;
+}
+
+ssize_t page_ftl_write(struct page_ftl *pgftl, struct device_request *request)
+{
+	struct device *dev;
+	char *buffer;
+	size_t page_size;
+
+	uint64_t lpn, offset;
+	uint64_t nr_entries;
+
+	size_t write_size;
+
+	dev = pgftl->dev;
+	page_size = device_get_page_size(dev);
+	write_size = request->data_len;
+
+	lpn = page_ftl_get_lpn(pgftl, request->sector);
+	offset = page_ftl_get_page_offset(pgftl, request->sector);
+
+	nr_entries = page_ftl_get_map_size(pgftl) / sizeof(uint32_t);
+	if (lpn > nr_entries) {
+		pr_err("invalid lpn detected (lpn: %lu, max: %lu)\n", lpn,
+		       nr_entries);
+		return -EINVAL;
+	}
+
+	if (offset + request->data_len > page_size) {
+		pr_err("overflow the write data (offset: %lu, length: %zu)\n",
+		       offset, request->data_len);
+		return -EINVAL;
 	}
 
 	buffer = (char *)malloc(page_size);
 	if (buffer == NULL) {
 		pr_err("memory allocation failed\n");
-		goto exception;
+		return -ENOMEM;
 	}
+	memset(buffer, 0, page_size);
+	if (pgftl->trans_map[lpn] != PADDR_EMPTY) {
+		ssize_t ret;
+		ret = page_ftl_read_for_overwrite(pgftl, lpn, buffer);
+		if (ret < 0) {
+			pr_err("read failed (lpn:%lu)\n", lpn);
+			return ret;
+		}
+	}
+	memcpy(&buffer[offset], request->data, write_size);
 
-	request->paddr = page_ftl_get_page(pgftl);
-	request->data_len = page_size;
+	request->flag = DEVICE_WRITE;
 	request->data = buffer;
-	/**< data must merge in here !!! you must implementate!! */
-	request->rq_private = rq_vec;
-	return request;
-exception:
-	if (buffer) {
-		free(buffer);
-	}
-	if (request) {
-		free(request);
-	}
-	return NULL;
-}
-
-static int page_ftl_vectored_write(struct device_request *rq_vec)
-{
-	struct device_request *request;
-	request = page_ftl_merge_request(rq_vec);
-	(void)request;
-	return 0;
-}
-
-int page_ftl_fill_wb(const uint64_t lpn, uintptr_t __request)
-{
-	struct page_ftl *pgftl;
-	struct device_request *request;
-	struct device *dev;
-
-	(void)lpn;
-
-	request = (struct device_request *)__request;
-	if (request == NULL) {
-		pr_err("lru deallcate routine doesn't work correctly\n");
-		return -EINVAL;
-	}
-	pgftl = (struct page_ftl *)request->rq_private;
-	dev = pgftl->dev;
-
-	pthread_mutex_lock(&dev->mutex);
-	if (dev->inflight_request) {
-		struct device_request *rq_vec;
-		rq_vec = dev->inflight_request;
-		dev->inflight_request = NULL;
-		pthread_mutex_unlock(&dev->mutex);
-
-		rq_vec->next_rq = request;
-		return page_ftl_vectored_write(rq_vec);
-	}
-	dev->inflight_request = request;
-	pthread_mutex_unlock(&dev->mutex);
-	return 0;
-}
-
-ssize_t page_ftl_write(struct page_ftl *pgftl, struct device_request *request)
-{
-	request->next_rq = NULL;
+	request->paddr = page_ftl_get_free_page(pgftl);
 	request->rq_private = (void *)pgftl;
-	return 0;
+	request->data_len = page_size;
+	request->end_rq = page_ftl_write_end_rq;
+
+	dev->d_op->write(dev, request);
+
+	return write_size;
 }

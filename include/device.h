@@ -42,6 +42,9 @@ typedef void (*device_end_req_fn)(struct device_request *);
 
 /**
  * @brief generic device address format
+ *
+ * @note
+ * `seqnum` is used for distinguish the each host pages in a device page
  */
 struct device_address {
 	union {
@@ -62,14 +65,13 @@ struct device_request {
 	unsigned int flag; /**< flag describes the bio's direction */
 
 	size_t data_len; /**< data length (bytes) */
-	uint64_t sector; /**< sector cursor (divide by sector size(1 << PAGE_SHIFT bytes)) */
+	uint64_t sector; /**< sector cursor (bytes) */
 	struct device_address paddr; /**< this contains the ppa */
 
 	void *data; /**< pointer of the data */
 	device_end_req_fn end_rq; /**< end request function */
 
 	void *rq_private; /**< contain the request's private data */
-	struct device_request *next_rq; /**< next request pointer */
 };
 
 /**
@@ -111,7 +113,6 @@ struct device {
 	pthread_mutex_t mutex;
 	const struct device_operations *d_op;
 	struct device_info info;
-	struct device_request *inflight_request;
 	void *d_private; /**< generally contain the sub-layer's data structure */
 	int (*d_submodule_exit)(struct device *);
 };

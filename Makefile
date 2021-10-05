@@ -1,6 +1,10 @@
 # You can generate the compile_commands.json file by using
 # `bear make all test`
 
+# `-fsanitize=address` and `-lasan` for memory leakage checking
+# `-g` and `-pg` for tracing the program
+# So, you must delete all when you release the program
+
 CC = gcc
 CXX = g++
 TARGET = a.out
@@ -18,11 +22,13 @@ CFLAGS := -Wall \
           -Winit-self \
           -Wmissing-field-initializers \
           -Wno-unknown-pragmas \
-          -Wundef
+          -Wundef \
+          -fsanitize=address \
+          -g -pg
 CXXFLAGS := -Wall \
 
 UNITY_ROOT := ./unity
-LIBS := -lm -lpthread -liberty
+LIBS := -lm -lpthread -liberty -lasan
 
 INCLUDES := -I./ -I./unity/src
 
@@ -51,13 +57,13 @@ $(TARGET): $(SRCS)
 	$(CC) $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
 
 lru-test.out: $(UNITY_ROOT)/src/unity.c ./util/lru.c ./test/lru-test.c
-	$(CC) -g -pg $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
+	$(CC) $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
 
 bits-test.out: $(UNITY_ROOT)/src/unity.c ./test/bits-test.c
-	$(CC) -g -pg $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
+	$(CC) $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
 
 ramdisk-test.out: $(UNITY_ROOT)/src/unity.c $(DEVICE_SRCS) ./test/ramdisk-test.c
-	$(CC) -g -pg $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
+	$(CC) $(MACROS) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
 
 check:
 	@echo "[[ CPPCHECK ROUTINE ]]"
@@ -70,8 +76,11 @@ check:
 documents:
 	doxygen -s Doxyfile
 
+flow:
+	find . -type f -name '*.[ch]' ! -path "./unity/*" ! -path "./test/*" | xargs -i cflow {}
+
 clean:
-	find . -name '*.o' | xargs -i rm -f {}
+	find . -name '*.o'  | xargs -i rm -f {}
 	rm -f $(TARGET) $(TEST_TARGET)
 	rm -rf doxygen/
 

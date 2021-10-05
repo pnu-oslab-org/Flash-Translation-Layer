@@ -11,6 +11,7 @@
 #include "include/bluedbm.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -46,9 +47,7 @@ int device_module_init(const uint64_t modnum, struct device **__dev,
 		ret = -ENOMEM;
 		goto exception;
 	}
-	dev->d_private = NULL;
-	dev->d_op = NULL;
-	dev->d_submodule_exit = NULL;
+	memset(dev, 0, sizeof(struct device));
 	pthread_mutex_init(&dev->mutex, NULL);
 	(void)flags;
 	ret = submodule_init[modnum](dev, flags);
@@ -80,14 +79,6 @@ int device_module_exit(struct device *dev)
 		dev->d_submodule_exit = NULL;
 	}
 	pthread_mutex_destroy(&dev->mutex);
-	if (dev->inflight_request) {
-		struct device_request *rq = dev->inflight_request;
-		while (rq) {
-			struct device_request *n_rq = rq->next_rq;
-			free(rq);
-			rq = n_rq;
-		}
-	}
 	free(dev);
 	return ret;
 }
