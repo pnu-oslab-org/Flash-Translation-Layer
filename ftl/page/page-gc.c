@@ -188,11 +188,15 @@ int page_ftl_do_gc(struct page_ftl *pgftl)
 	size_t segnum;
 
 	segment = page_ftl_pick_gc_target(pgftl);
+	if (segment == NULL) {
+		pr_debug("gc target segment doesn't exist\n");
+		return 0;
+	}
 	segnum = page_ftl_get_segment_number(pgftl, (uintptr_t)segment);
 	pr_debug("current segnum: %zu\n", segnum);
 
 	ret = page_ftl_valid_page_copy(pgftl, segment);
-	if (ret) {
+	if (ret < 0) {
 		pr_err("valid page copy failed\n");
 		return ret;
 	}

@@ -53,37 +53,65 @@ static ssize_t page_ftl_write_interface(struct flash_device *flash,
 	ssize_t size = -1;
 	struct page_ftl *pgftl = NULL;
 	struct device_request *request = NULL;
+	char *ptr;
+	size_t page_size;
 
 	/** check the pointer validity */
 	if (flash == NULL) {
 		pr_err("flash pointer doesn't exist\n");
-		return -EINVAL;
+		size = -EINVAL;
+		goto exception;
 	}
 
 	pgftl = (struct page_ftl *)flash->f_private;
 	if (pgftl == NULL) {
 		pr_err("page FTL information doesn't exist\n");
-		return -EINVAL;
-	}
-
-	/** allocate the request */
-	request =
-		(struct device_request *)malloc(sizeof(struct device_request));
-	if (request == NULL) {
-		pr_err("fail to allocate request structure\n");
+		size = -EINVAL;
 		goto exception;
 	}
 
-	request->flag = DEVICE_WRITE;
-	request->data_len = count;
-	request->sector = offset;
-	request->data = buffer;
+	ptr = (char *)buffer;
+	page_size = device_get_page_size(pgftl->dev);
+	while (count != 0) {
+		size_t pos;
+		size_t write_size;
 
-	/** submit the request */
-	size = page_ftl_submit_request(pgftl, request);
-	if (size < 0) {
-		pr_err("page FTL submit request failed\n");
-		goto exception;
+		pos = page_ftl_get_page_offset(pgftl, offset);
+		if (pos + count < page_size) {
+			write_size = count;
+		} else {
+			write_size = page_size - pos;
+		}
+
+		/** allocate the request */
+		request = (struct device_request *)malloc(
+			sizeof(struct device_request));
+		if (request == NULL) {
+			pr_err("fail to allocate request structure\n");
+			size = -ENOMEM;
+			goto exception;
+		}
+
+		request->flag = DEVICE_WRITE;
+		request->data_len = write_size;
+		request->sector = offset;
+		request->data = ptr;
+
+		pr_debug("%zu (length: %zu, buffer: %lu, count: %lu)\n",
+			 request->sector, request->data_len,
+			 (uintptr_t)request->data - (uintptr_t)buffer, count);
+		fflush(stdout);
+
+		/** submit the request */
+		size = page_ftl_submit_request(pgftl, request);
+		if (size < 0) {
+			pr_err("page FTL submit request failed\n");
+			goto exception;
+		}
+
+		offset += size;
+		count -= size;
+		ptr += size;
 	}
 	return size;
 
@@ -109,43 +137,88 @@ exception:
 static ssize_t page_ftl_read_interface(struct flash_device *flash, void *buffer,
 				       size_t count, off_t offset)
 {
-	ssize_t size = -1;
 	struct page_ftl *pgftl = NULL;
 	struct device_request *request = NULL;
+
+	char *temp = NULL;
+
+	ssize_t size = -1;
+	size_t page_size;
+
+	char *ptr;
+
+	ptr = (char *)buffer;
+	if (ptr == NULL) {
+		pr_err("buffer pointer doesn't exist\n");
+		size = -EINVAL;
+		goto exception;
+	}
 
 	/** check the pointer validity */
 	if (flash == NULL) {
 		pr_err("flash pointer doesn't exist\n");
-		return -EINVAL;
+		size = -EINVAL;
+		goto exception;
 	}
 	pgftl = (struct page_ftl *)flash->f_private;
 	if (pgftl == NULL) {
 		pr_err("page FTL information doesn't exist\n");
-		return -EINVAL;
-	}
-
-	/** allocate the request */
-	request =
-		(struct device_request *)malloc(sizeof(struct device_request));
-	if (request == NULL) {
-		pr_err("fail to allocate request structure\n");
+		size = -EINVAL;
 		goto exception;
 	}
 
-	request->flag = DEVICE_READ;
-	request->data_len = count;
-	request->sector = offset;
-	request->data = buffer;
-
-	/** submit the request */
-	size = page_ftl_submit_request(pgftl, request);
-	if (size < 0) {
-		pr_err("page FTL submit request failed\n");
+	page_size = device_get_page_size(pgftl->dev);
+	temp = (char *)malloc(page_size);
+	if (temp == NULL) {
+		pr_err("memory allocation failed\n");
+		size = -ENOMEM;
 		goto exception;
 	}
+
+	while (count != 0) {
+		size_t pos;
+		size_t read_size;
+
+		pos = page_ftl_get_page_offset(pgftl, offset);
+		if (pos + count < page_size) {
+			read_size = count;
+		} else {
+			read_size = page_size - pos;
+		}
+
+		/** allocate the request */
+		request = (struct device_request *)malloc(
+			sizeof(struct device_request));
+		if (request == NULL) {
+			pr_err("fail to allocate request structure\n");
+			size = -ENOMEM;
+			goto exception;
+		}
+
+		request->flag = DEVICE_READ;
+		request->data_len = read_size;
+		request->sector = offset;
+		request->data = temp;
+
+		/** submit the request */
+		size = page_ftl_submit_request(pgftl, request);
+		if (size < 0) {
+			pr_err("page FTL submit request failed\n");
+			size = -EINVAL;
+			goto exception;
+		}
+		memcpy(ptr, temp, size);
+		offset += size;
+		count -= size;
+		ptr += size;
+	}
+	free(temp);
 	return size;
 
 exception:
+	if (temp) {
+		free(temp);
+	}
 	if (request) {
 		free(request);
 	}
