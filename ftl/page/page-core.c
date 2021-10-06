@@ -6,15 +6,12 @@
  * @date 2021-09-22
  */
 #include <errno.h>
-#ifdef __cplusplus
-#include <atomic>
-#else
-#include <stdatomic.h>
-#endif
 
 #include <assert.h>
 #include <string.h>
+#include <glib.h>
 
+#include "include/atomic.h"
 #include "include/page.h"
 #include "include/log.h"
 #include "include/bits.h"
@@ -77,14 +74,9 @@ static int page_ftl_init_segment(struct page_ftl *pgftl)
 			       i);
 			return ret;
 		}
-		ret = page_ftl_alloc_bitmap(pgftl, &segments[i].valid_bits);
-		if (ret) {
-			pr_err("initialize the valid bitmap failed (segnum: %zu)\n",
-			       i);
-			return ret;
-		}
 		atomic_store(&segments[i].nr_free_pages, nr_pages_per_segment);
 		atomic_store(&segments[i].nr_valid_pages, 0);
+		segments[i].lba_list = NULL;
 		pr_debug("initialize the segment %zu (bits: %zu, size: %lu)\n",
 			 i, nr_pages_per_segment,
 			 (uint64_t)(nr_pages_per_segment) / 8);
@@ -186,20 +178,19 @@ static void page_ftl_free_segments(struct page_ftl *pgftl)
 	nr_segments = device_get_nr_segments(pgftl->dev);
 	for (i = 0; i < nr_segments; i++) {
 		uint64_t *use_bits;
-		uint64_t *valid_bits;
 
 		use_bits = segments[i].use_bits;
-		valid_bits = segments[i].valid_bits;
 
 		if (use_bits != NULL) {
 			free(use_bits);
 		}
-		if (valid_bits != NULL) {
-			free(valid_bits);
-		}
 
 		segments[i].use_bits = NULL;
-		segments[i].valid_bits = NULL;
+
+		if (segments[i].lba_list) {
+			g_list_free(segments[i].lba_list);
+			segments[i].lba_list = NULL;
+		}
 	}
 }
 

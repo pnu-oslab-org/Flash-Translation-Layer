@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <pthread.h>
 
+#define PADDR_EMPTY ((uint32_t)UINT32_MAX)
+
 struct device_request;
 struct device_operations;
 
@@ -65,7 +67,7 @@ struct device_request {
 	unsigned int flag; /**< flag describes the bio's direction */
 
 	size_t data_len; /**< data length (bytes) */
-	uint64_t sector; /**< sector cursor (bytes) */
+	size_t sector; /**< sector cursor (bytes) */
 	struct device_address paddr; /**< this contains the ppa */
 
 	void *data; /**< pointer of the data */

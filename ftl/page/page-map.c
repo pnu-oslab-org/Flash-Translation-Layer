@@ -70,7 +70,6 @@ retry:
 	paddr.lpn |= offset;
 
 	set_bit(segment->use_bits, offset);
-	set_bit(segment->valid_bits, offset);
 	atomic_store(&segment->nr_free_pages, nr_free_pages - 1);
 
 	nr_valid_pages = atomic_load(&segment->nr_valid_pages);

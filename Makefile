@@ -12,6 +12,9 @@ TEST_TARGET = lru-test.out bits-test.out ramdisk-test.out
 
 MACROS := -DDEBUG
 
+GLIB_INCLUDES = $(shell pkg-config --cflags glib-2.0)
+GLIB_LIBS = $(shell pkg-config --libs glib-2.0)
+
 CFLAGS := -Wall \
           -Wextra \
           -Wpointer-arith \
@@ -25,13 +28,12 @@ CFLAGS := -Wall \
           -Wundef \
           -fsanitize=address \
           -g -pg
-CXXFLAGS := -Wall \
+CXXFLAGS := $(CFLAGS)
 
 UNITY_ROOT := ./unity
-LIBS := -lm -lpthread -liberty -lasan
+LIBS := -lm -lpthread -liberty -lasan $(GLIB_LIBS)
 
-INCLUDES := -I./ -I./unity/src
-
+INCLUDES := -I./ -I./unity/src $(GLIB_INCLUDES)
 DEVICE_SRCS := device/ramdisk/*.c \
                device/bluedbm/*.c \
                device/*.c

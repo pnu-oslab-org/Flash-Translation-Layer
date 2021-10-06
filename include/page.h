@@ -14,12 +14,13 @@
 #include <limits.h>
 #include <unistd.h>
 
+#include <glib.h>
+
 #include "flash.h"
 #include "atomic.h"
 #include "device.h"
 
 #define PAGE_FTL_CACHE_SIZE (2)
-#define PADDR_EMPTY (UINT32_MAX)
 
 /**
  * @brief segment information structure
@@ -31,7 +32,7 @@ struct page_ftl_segment {
 	atomic64_t nr_valid_pages;
 
 	uint64_t *use_bits; /**< contain the use page information */
-	uint64_t *valid_bits; /**< contain the valid page information */
+	GList *lba_list; /**< lba_list which contains the valid data */
 };
 
 /**
@@ -58,8 +59,8 @@ int page_ftl_module_exit(struct flash_device *);
 
 /* page-map.c */
 struct device_address page_ftl_get_free_page(struct page_ftl *);
-int page_ftl_update_map(struct page_ftl *, uint64_t sector, uint32_t ppn);
-struct device_address page_ftl_get_map(struct page_ftl *, uint64_t sector);
+int page_ftl_update_map(struct page_ftl *, size_t sector, uint32_t ppn);
+struct device_address page_ftl_get_map(struct page_ftl *, size_t sector);
 
 static inline size_t page_ftl_get_map_size(struct page_ftl *pgftl)
 {
@@ -67,13 +68,13 @@ static inline size_t page_ftl_get_map_size(struct page_ftl *pgftl)
 	return ((device_get_total_size(dev) / device_get_page_size(dev)) + 1) *
 	       sizeof(uint32_t);
 }
-static inline uint64_t page_ftl_get_lpn(struct page_ftl *pgftl, uint64_t sector)
+static inline size_t page_ftl_get_lpn(struct page_ftl *pgftl, size_t sector)
 {
 	return sector / device_get_page_size(pgftl->dev);
 }
 
-static inline uint64_t page_ftl_get_page_offset(struct page_ftl *pgftl,
-						uint64_t sector)
+static inline size_t page_ftl_get_page_offset(struct page_ftl *pgftl,
+					      size_t sector)
 {
 	return sector % device_get_page_size(pgftl->dev);
 }

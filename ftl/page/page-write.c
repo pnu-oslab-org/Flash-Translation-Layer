@@ -18,7 +18,9 @@
 #include <errno.h>
 #include <string.h>
 
-static void page_ftl_invalidate(struct page_ftl *pgftl, uint64_t lpn)
+#include <glib.h>
+
+static void page_ftl_invalidate(struct page_ftl *pgftl, size_t lpn)
 {
 	struct page_ftl_segment *segment;
 	struct device_address paddr;
@@ -30,8 +32,8 @@ static void page_ftl_invalidate(struct page_ftl *pgftl, uint64_t lpn)
 	segnum = paddr.format.block;
 	segment = &pgftl->segments[segnum];
 
-	paddr.format.block = 0;
-	reset_bit(segment->valid_bits, paddr.lpn);
+	segment->lba_list =
+		g_list_remove(segment->lba_list, GSIZE_TO_POINTER(lpn));
 
 	nr_valid_pages = atomic_load(&segment->nr_valid_pages);
 	atomic_store(&segment->nr_valid_pages, nr_valid_pages - 1);
@@ -42,8 +44,9 @@ static void page_ftl_invalidate(struct page_ftl *pgftl, uint64_t lpn)
 static void page_ftl_write_end_rq(struct device_request *request)
 {
 	struct page_ftl *pgftl;
+	struct page_ftl_segment *segment;
 
-	uint64_t lpn;
+	size_t lpn;
 
 	pgftl = (struct page_ftl *)request->rq_private;
 
@@ -54,19 +57,17 @@ static void page_ftl_write_end_rq(struct device_request *request)
 			 pgftl->trans_map[lpn]);
 	}
 	page_ftl_update_map(pgftl, request->sector, request->paddr.lpn);
+	segment = &pgftl->segments[request->paddr.format.block];
+	segment->lba_list =
+		g_list_prepend(segment->lba_list, GSIZE_TO_POINTER(lpn));
+
 	pr_debug("new address: %lu => %u\n", lpn, pgftl->trans_map[lpn]);
-	pr_debug("%lu/%lu(free/valid)\n",
-		 atomic_load(&pgftl->segments[request->paddr.format.block]
-				      .nr_free_pages),
-		 atomic_load(&pgftl->segments[request->paddr.format.block]
-				      .nr_valid_pages));
-	pr_debug("%d\n",
-		 *(int *)&((char *)request->data)[page_ftl_get_page_offset(
-			 pgftl, request->sector)]);
+	pr_debug("%lu/%lu(free/valid)\n", atomic_load(&segment->nr_free_pages),
+		 atomic_load(&segment->nr_valid_pages));
 	free(request->data);
 }
 
-static ssize_t page_ftl_read_for_overwrite(struct page_ftl *pgftl, uint64_t lpn,
+static ssize_t page_ftl_read_for_overwrite(struct page_ftl *pgftl, size_t lpn,
 					   void *buffer)
 {
 	struct device *dev;
@@ -102,8 +103,8 @@ ssize_t page_ftl_write(struct page_ftl *pgftl, struct device_request *request)
 	char *buffer;
 	size_t page_size;
 
-	uint64_t lpn, offset;
-	uint64_t nr_entries;
+	size_t lpn, offset;
+	size_t nr_entries;
 
 	size_t write_size;
 
