@@ -26,6 +26,7 @@ static void page_ftl_read_end_rq(struct device_request *read_rq)
 	       request->data_len);
 	free(read_rq->data);
 	free(read_rq);
+	free(request);
 }
 
 ssize_t page_ftl_read(struct page_ftl *pgftl, struct device_request *request)
@@ -39,6 +40,7 @@ ssize_t page_ftl_read(struct page_ftl *pgftl, struct device_request *request)
 	size_t lpn, offset;
 
 	ssize_t ret = 0;
+	ssize_t data_len;
 
 	read_rq =
 		(struct device_request *)malloc(sizeof(struct device_request));
@@ -78,9 +80,10 @@ ssize_t page_ftl_read(struct page_ftl *pgftl, struct device_request *request)
 	read_rq->rq_private = request;
 	read_rq->end_rq = page_ftl_read_end_rq;
 
+	data_len = request->data_len;
 	dev->d_op->read(dev, read_rq);
+	ret = data_len;
 
-	ret = request->data_len;
 	return ret;
 exception:
 	if (buffer) {

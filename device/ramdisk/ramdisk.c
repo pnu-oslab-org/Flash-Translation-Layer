@@ -182,6 +182,7 @@ int ramdisk_erase(struct device *dev, struct device_request *request)
 	struct ramdisk *ramdisk = (struct ramdisk *)dev->d_private;
 	struct device_address addr = request->paddr;
 	size_t page_size;
+	size_t segnum;
 	uint32_t nr_pages_per_segment;
 	uint32_t lpn;
 
@@ -193,6 +194,9 @@ int ramdisk_erase(struct device *dev, struct device_request *request)
 
 	page_size = device_get_page_size(dev);
 	nr_pages_per_segment = (uint32_t)device_get_pages_per_segment(dev);
+	segnum = addr.format.block;
+	addr.lpn = 0;
+	addr.format.block = segnum;
 	for (lpn = addr.lpn; lpn < addr.lpn + nr_pages_per_segment; lpn++) {
 		memset(&ramdisk->buffer[lpn * page_size], 0, page_size);
 		reset_bit(ramdisk->is_used, lpn);

@@ -28,17 +28,23 @@ static void page_ftl_invalidate(struct page_ftl *pgftl, size_t lpn)
 	uint32_t segnum;
 	size_t nr_valid_pages;
 
+	/**< segment information update */
 	paddr.lpn = pgftl->trans_map[lpn];
 	segnum = paddr.format.block;
 	segment = &pgftl->segments[segnum];
 
-	segment->lba_list =
-		g_list_remove(segment->lba_list, GSIZE_TO_POINTER(lpn));
+	segment->lpn_list =
+		g_list_remove(segment->lpn_list, GSIZE_TO_POINTER(lpn));
 
 	nr_valid_pages = atomic_load(&segment->nr_valid_pages);
 	atomic_store(&segment->nr_valid_pages, nr_valid_pages - 1);
 
+	/**< global information update */
 	pgftl->trans_map[lpn] = PADDR_EMPTY;
+	if (get_bit(pgftl->gc_seg_bits, segnum) != 1) {
+		pgftl->gc_list = g_list_prepend(pgftl->gc_list, segment);
+		set_bit(pgftl->gc_seg_bits, segnum);
+	}
 }
 
 static void page_ftl_write_end_rq(struct device_request *request)
@@ -56,15 +62,20 @@ static void page_ftl_write_end_rq(struct device_request *request)
 		pr_debug("invalidate address: %lu => %u\n", lpn,
 			 pgftl->trans_map[lpn]);
 	}
-	page_ftl_update_map(pgftl, request->sector, request->paddr.lpn);
+	/**< segment information update */
 	segment = &pgftl->segments[request->paddr.format.block];
-	segment->lba_list =
-		g_list_prepend(segment->lba_list, GSIZE_TO_POINTER(lpn));
+	segment->lpn_list =
+		g_list_prepend(segment->lpn_list, GSIZE_TO_POINTER(lpn));
+
+	/**< global information update */
+	page_ftl_update_map(pgftl, request->sector, request->paddr.lpn);
 
 	pr_debug("new address: %lu => %u\n", lpn, pgftl->trans_map[lpn]);
 	pr_debug("%lu/%lu(free/valid)\n", atomic_load(&segment->nr_free_pages),
 		 atomic_load(&segment->nr_valid_pages));
+
 	free(request->data);
+	free(request);
 }
 
 static ssize_t page_ftl_read_for_overwrite(struct page_ftl *pgftl, size_t lpn,
@@ -93,7 +104,6 @@ static ssize_t page_ftl_read_for_overwrite(struct page_ftl *pgftl, size_t lpn,
 		pr_err("previous buffer read failed\n");
 		return -EFAULT;
 	}
-	free(read_rq);
 	return ret;
 }
 
@@ -146,7 +156,8 @@ ssize_t page_ftl_write(struct page_ftl *pgftl, struct device_request *request)
 
 	request->flag = DEVICE_WRITE;
 	request->data = buffer;
-	request->paddr = page_ftl_get_free_page(pgftl);
+	request->paddr =
+		page_ftl_get_free_page(pgftl); /**< global data retrieve */
 	request->rq_private = (void *)pgftl;
 	request->data_len = page_size;
 	request->end_rq = page_ftl_write_end_rq;

@@ -11,6 +11,7 @@
 
 #include "include/module.h"
 #include "include/flash.h"
+#include "include/page.h"
 #include "include/log.h"
 #include "include/device.h"
 
@@ -35,6 +36,13 @@ int main(void)
 		flash->f_op->read(flash, buffer, 512, i * 512);
 		memset(buffer, 0, 8192);
 		pr_info("read value: %d\n", *(int *)buffer);
+	}
+	for (int i = 0; i < 8192 * 3; i++) {
+		flash->f_op->read(flash, buffer, 512, i * 512);
+		pr_info("read value: %d\n", *(int *)buffer);
+	}
+	for (int i = 0; i < 3; i++) {
+		flash->f_op->ioctl(flash, PAGE_FTL_IOCTL_TRIM);
 	}
 	for (int i = 0; i < 8192 * 3; i++) {
 		flash->f_op->read(flash, buffer, 512, i * 512);

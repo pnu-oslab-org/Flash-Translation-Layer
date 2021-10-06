@@ -35,8 +35,31 @@ static int page_ftl_alloc_bitmap(struct page_ftl *pgftl, uint64_t **bitmap)
 		pr_err("bitmap allocation failed\n");
 		return -ENOMEM;
 	}
-	memset(bits, 0, BITS_TO_BYTES(nr_pages_per_segment));
 	*bitmap = bits;
+	return 0;
+}
+
+/**
+ * @brief initialize the page ftl's segment data only
+ *
+ * @param pgftl pointer of the page-ftl structure
+ * @param segment pointer of the target segment
+ *
+ * @return 0 for successfully initialized
+ */
+int page_ftl_segment_data_init(struct page_ftl *pgftl,
+			       struct page_ftl_segment *segment)
+{
+	size_t nr_pages_per_segment;
+	nr_pages_per_segment = device_get_pages_per_segment(pgftl->dev);
+	atomic_store(&segment->nr_free_pages, nr_pages_per_segment);
+	atomic_store(&segment->nr_valid_pages, 0);
+
+	memset(segment->use_bits, 0, BITS_TO_BYTES(nr_pages_per_segment));
+	if (segment->lpn_list) {
+		g_list_free(segment->lpn_list);
+	}
+	segment->lpn_list = NULL;
 	return 0;
 }
 
@@ -74,9 +97,13 @@ static int page_ftl_init_segment(struct page_ftl *pgftl)
 			       i);
 			return ret;
 		}
-		atomic_store(&segments[i].nr_free_pages, nr_pages_per_segment);
-		atomic_store(&segments[i].nr_valid_pages, 0);
-		segments[i].lba_list = NULL;
+		segments[i].lpn_list = NULL;
+		ret = page_ftl_segment_data_init(pgftl, &segments[i]);
+		if (ret) {
+			pr_err("initialize the segment data failed (segnum: %zu)\n",
+			       i);
+			return ret;
+		}
 		pr_debug("initialize the segment %zu (bits: %zu, size: %lu)\n",
 			 i, nr_pages_per_segment,
 			 (uint64_t)(nr_pages_per_segment) / 8);
@@ -97,6 +124,7 @@ int page_ftl_open(struct page_ftl *pgftl)
 {
 	int err;
 	size_t map_size;
+	size_t nr_segments;
 
 	struct device *dev;
 
@@ -128,6 +156,15 @@ int page_ftl_open(struct page_ftl *pgftl)
 	if (err) {
 		goto exception;
 	}
+	pgftl->gc_list = NULL;
+
+	nr_segments = device_get_nr_segments(dev);
+	pgftl->gc_seg_bits = (uint64_t *)malloc(BITS_TO_BYTES(nr_segments));
+	if (pgftl->gc_seg_bits == NULL) {
+		pr_err("memory allocation failed\n");
+		goto exception;
+	}
+	memset(pgftl->gc_seg_bits, 0, BITS_TO_BYTES(nr_segments));
 
 	return 0;
 
@@ -187,9 +224,9 @@ static void page_ftl_free_segments(struct page_ftl *pgftl)
 
 		segments[i].use_bits = NULL;
 
-		if (segments[i].lba_list) {
-			g_list_free(segments[i].lba_list);
-			segments[i].lba_list = NULL;
+		if (segments[i].lpn_list) {
+			g_list_free(segments[i].lpn_list);
+			segments[i].lpn_list = NULL;
 		}
 	}
 }
@@ -219,6 +256,16 @@ int page_ftl_close(struct page_ftl *pgftl)
 	if (pgftl->trans_map) {
 		free(pgftl->trans_map);
 		pgftl->trans_map = NULL;
+	}
+
+	if (pgftl->gc_list) {
+		g_list_free(pgftl->gc_list);
+		pgftl->gc_list = NULL;
+	}
+
+	if (pgftl->gc_seg_bits) {
+		free(pgftl->gc_seg_bits);
+		pgftl->gc_seg_bits = NULL;
 	}
 
 	if (pgftl->dev && pgftl->dev->d_op) {

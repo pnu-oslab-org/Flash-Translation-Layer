@@ -7,7 +7,7 @@
 
 CC = gcc
 CXX = g++
-TARGET = a.out
+TARGET = libbloom.so a.out
 TEST_TARGET = lru-test.out bits-test.out ramdisk-test.out
 
 MACROS := -DDEBUG

@@ -22,6 +22,9 @@
 
 #define PAGE_FTL_CACHE_SIZE (2)
 
+enum { PAGE_FTL_IOCTL_TRIM = 0,
+};
+
 /**
  * @brief segment information structure
  * @note
@@ -32,7 +35,7 @@ struct page_ftl_segment {
 	atomic64_t nr_valid_pages;
 
 	uint64_t *use_bits; /**< contain the use page information */
-	GList *lba_list; /**< lba_list which contains the valid data */
+	GList *lpn_list; /**< lba_list which contains the valid data */
 };
 
 /**
@@ -44,6 +47,9 @@ struct page_ftl {
 	struct page_ftl_segment *segments;
 	struct device *dev;
 	pthread_mutex_t mutex;
+
+	GList *gc_list; /**< garbage collection target list */
+	uint64_t *gc_seg_bits; /**< to find segnum is in gc list or not */
 };
 
 /* page-interface.c */
@@ -62,6 +68,12 @@ struct device_address page_ftl_get_free_page(struct page_ftl *);
 int page_ftl_update_map(struct page_ftl *, size_t sector, uint32_t ppn);
 struct device_address page_ftl_get_map(struct page_ftl *, size_t sector);
 
+/* page-core.c */
+int page_ftl_segment_data_init(struct page_ftl *, struct page_ftl_segment *);
+
+/* page-gc.c */
+int page_ftl_do_gc(struct page_ftl *);
+
 static inline size_t page_ftl_get_map_size(struct page_ftl *pgftl)
 {
 	struct device *dev = pgftl->dev;
@@ -77,5 +89,12 @@ static inline size_t page_ftl_get_page_offset(struct page_ftl *pgftl,
 					      size_t sector)
 {
 	return sector % device_get_page_size(pgftl->dev);
+}
+
+static inline size_t page_ftl_get_segment_number(struct page_ftl *pgftl,
+						 uintptr_t segment)
+{
+	return (segment - (uintptr_t)pgftl->segments) /
+	       sizeof(struct page_ftl_segment);
 }
 #endif

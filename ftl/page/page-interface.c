@@ -85,7 +85,6 @@ static ssize_t page_ftl_write_interface(struct flash_device *flash,
 		pr_err("page FTL submit request failed\n");
 		goto exception;
 	}
-	free(request);
 	return size;
 
 exception:
@@ -144,7 +143,6 @@ static ssize_t page_ftl_read_interface(struct flash_device *flash, void *buffer,
 		pr_err("page FTL submit request failed\n");
 		goto exception;
 	}
-	free(request);
 	return size;
 
 exception:
@@ -176,6 +174,30 @@ static int page_ftl_close_interface(struct flash_device *flash)
 	return page_ftl_close(pgftl);
 }
 
+static int page_ftl_ioctl_interface(struct flash_device *flash,
+				    unsigned int request, ...)
+{
+	struct page_ftl *pgftl = NULL;
+	if (flash == NULL) {
+		pr_err("flash pointer doesn't exist\n");
+		return -EINVAL;
+	}
+	pgftl = (struct page_ftl *)flash->f_private;
+	if (pgftl == NULL) {
+		pr_err("page FTL information doesn't exist\n");
+		return -EINVAL;
+	}
+	switch (request) {
+	case PAGE_FTL_IOCTL_TRIM:
+		page_ftl_do_gc(pgftl);
+		break;
+	default:
+		pr_err("invalid command requested(commands: %u)\n", request);
+		return -EINVAL;
+	}
+	return 0;
+}
+
 /**
  * @brief implementation of the flash_operations
  */
@@ -183,7 +205,7 @@ const struct flash_operations __page_fops = {
 	.open = page_ftl_open_interface,
 	.write = page_ftl_write_interface,
 	.read = page_ftl_read_interface,
-	.ioctl = NULL,
+	.ioctl = page_ftl_ioctl_interface,
 	.close = page_ftl_close_interface,
 };
 
