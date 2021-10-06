@@ -28,7 +28,8 @@ CFLAGS := -Wall \
           -Wundef \
           -fsanitize=address \
           -g -pg
-CXXFLAGS := $(CFLAGS)
+CXXFLAGS := $(CFLAGS) \
+            -std=c++11
 
 UNITY_ROOT := ./unity
 LIBS := -lm -lpthread -liberty -lasan $(GLIB_LIBS)
